@@ -1,0 +1,66 @@
+// ============================================================================
+// dns-queries.spl — DNS Log Analysis (Splunk SIEM Homelab)
+// ---------------------------------------------------------------------------
+// Queries as executed in Splunk Enterprise against index="homelab".
+// Each query is preserved exactly as documented; run one block at a time.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+// Query 1: Most frequently queried domain names
+// Purpose: Establish a baseline of expected DNS destinations and surface
+//          any domain that dominates traffic.
+// Observed: 1,200 events; google.com 139, printer.local 139, example.com 137 ...
+// ----------------------------------------------------------------------------
+
+index="homelab" source="dns_logs.json"
+| stats count by query
+| sort - count
+
+
+// ----------------------------------------------------------------------------
+// Query 2: Most active source IPs generating DNS traffic
+// Purpose: Profile per-client DNS volume to isolate noisy or compromised hosts.
+// Observed: 2,400 events across 12 source hosts; top host 192.168.1.10 (226).
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="_json"
+| stats count by id.orig_h
+| sort - count
+
+
+// ----------------------------------------------------------------------------
+// Query 3: Breakdown of DNS query types (A, AAAA, CNAME, PTR)
+// Purpose: Baseline the record-type mix so abnormal types (TXT/NULL used in
+//          DNS tunneling) become recognizable.
+// Observed: A 526, AAAA 642, CNAME 514, PTR 618 (2,400 events).
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="_json"
+| stats count by qtype
+
+
+// ============================================================================
+// OPTIONAL IMPROVEMENTS — NOT EXECUTED, NO EVIDENCE CAPTURED
+// Suggested refinements for future work. Clearly different from the tested
+// queries above: they have not been run and produce no documented results.
+// ============================================================================
+
+// Improvement A: standardize the sourcetype filter.
+// Queries 2 and 3 use the broad sourcetype="_json" filter, while Query 1 uses
+// source="dns_logs.json". If the DNS data has (or is given) its own sourcetype,
+// all three queries should use it consistently to avoid pulling in unrelated
+// JSON events from the same index.
+
+// index="homelab" sourcetype="dns_logs"
+// | stats count by query
+// | sort - count
+
+
+// Improvement B: prioritize rare domains instead of only the most frequent.
+// Frequency hunting usually matters at the bottom of the list (possible DGA /
+// beaconing), not the top.
+
+// index="homelab" source="dns_logs.json"
+// | stats count by query
+// | sort + count

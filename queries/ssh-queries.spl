@@ -1,0 +1,110 @@
+// ============================================================================
+// ssh-queries.spl — SSH Log Analysis (Splunk SIEM Homelab)
+// ---------------------------------------------------------------------------
+// Queries as executed in Splunk Enterprise against index="homelab",
+// sourcetype="ssh_logs".
+//
+// Data-quality note: the original notes referred to "index=ssh_log"; every
+// captured screenshot shows the searches actually ran against
+// index="homelab" sourcetype="ssh_logs". The verified form is used here.
+//
+// Query 7 is the documented ALERT configuration (threshold-based). It was
+// designed and its detection search evidenced; the saved alert object itself
+// was not captured in a screenshot and remains to be verified in Splunk.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+// Query 1: Ingestion / field-extraction validation
+// Purpose: Confirm the four expected event_type values were extracted.
+// Observed: 1,200 events — Connection Without Authentication 286,
+//           Failed SSH Login 305, Multiple Failed Authentication Attempts 303,
+//           Successful SSH Login 306.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="ssh_logs" | stats count by event_type
+
+
+// ----------------------------------------------------------------------------
+// Query 2: Failed login attempts per source IP (top offenders)
+// Purpose: Profile failed SSH logins; supports the top-10 view and the
+//          column-chart visualization captured in the screenshots.
+// Observed: 305 events across 50 source IPs; top 10.0.0.30 (11 attempts).
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="ssh_logs" event_type="Failed SSH Login"
+| stats count by id.orig_h
+| sort - count
+
+
+// ----------------------------------------------------------------------------
+// Query 3: Repeated failed authentication attempts (brute-force pattern)
+// Purpose: Detect sources exceeding a failure threshold against a target.
+// Observed: 303 events; one pair exceeded the filter —
+//           10.0.0.28 -> 10.0.0.1 with 5 attempts.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="ssh_logs" event_type="Multiple Failed Authentication Attempts"
+| stats count by id.orig_h, id.resp_h
+| where count > 3
+
+
+// ----------------------------------------------------------------------------
+// Query 4: Successful SSH logins per source/destination pair
+// Purpose: Baseline normal logins and enable the failure-then-success
+//          correlation used to detect compromised accounts.
+// Observed: 306 events across 249 pairs; max 3 logins per pair.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="ssh_logs" event_type="Successful SSH Login"
+| stats count by id.orig_h, id.resp_h
+
+
+// ----------------------------------------------------------------------------
+// Query 5: Connections without authentication (probing / port scanning)
+// Purpose: Hunt SSH connections that never attempted authentication.
+// Observed: 286 events across 49 source IPs; top 10.0.0.14 and 10.0.0.18 (13).
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="ssh_logs" event_type="Connection Without Authentication"
+| stats count by id.orig_h
+
+
+// ----------------------------------------------------------------------------
+// Query 6: Timechart of unauthenticated connections
+// Purpose: Monitor unauthenticated SSH connections over time to distinguish
+//          constant background noise from bursty scanning campaigns.
+// Observed: 286 events; data concentrated at 2025-04-24 15:50:09.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="ssh_logs" event_type="Connection Without Authentication"
+| timechart count by id.orig_h
+
+
+// ----------------------------------------------------------------------------
+// Query 7: DOCUMENTED ALERT CONFIGURATION (not merely investigative)
+// Threshold preserved from the original documentation:
+//   Trigger when any source IP exceeds 5 login attempts within 10 minutes.
+// Status: the detection logic below matches the documented threshold; the
+//   alert object in Splunk was not screenshotted and should be verified.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="ssh_logs" event_type="Failed SSH Login" earliest=-10m
+| stats count by id.orig_h
+| where count > 5
+
+
+// ============================================================================
+// OPTIONAL IMPROVEMENTS — NOT EXECUTED, NO EVIDENCE CAPTURED
+// ============================================================================
+
+// Improvement A: correlate failures with subsequent successes (compromise
+// confirmation). The investigation describes this correlation qualitatively;
+// the query below is a suggested implementation that was not run.
+
+// index="homelab" sourcetype="ssh_logs" event_type="Failed SSH Login"
+// | stats count by id.orig_h, id.resp_h
+// | where count > 5
+// | join id.orig_h
+//     [ search index="homelab" sourcetype="ssh_logs" event_type="Successful SSH Login"
+//       | stats count by id.orig_h, id.resp_h ]

@@ -1,0 +1,95 @@
+// ============================================================================
+// http-queries.spl — HTTP Log Analysis (Splunk SIEM Homelab)
+// ---------------------------------------------------------------------------
+// Queries as executed in Splunk Enterprise against index="homelab",
+// sourcetype="http_logs". Each query is preserved exactly as documented;
+// run one block at a time.
+// ============================================================================
+
+
+// ----------------------------------------------------------------------------
+// Query 1: Top 10 source IPs generating web traffic
+// Purpose: Traffic-volume triage — identify the loudest HTTP clients.
+// Observed: 3,000 events; top 10.0.0.28 (76), 10.0.0.31 (73), 10.0.0.42 (73).
+//
+// Scoping note: the original task was titled "top 10 endpoints", but the
+// executed search aggregates by source IP (id.orig_h), as below. The
+// endpoint variant is listed under OPTIONAL IMPROVEMENTS.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="http_logs"
+| stats count by "id.orig_h"
+| sort -count
+| head 10
+
+
+// ----------------------------------------------------------------------------
+// Query 2: Count of HTTP server errors (5xx)
+// Purpose: Quantify 5xx responses — application-health signal and a side
+//          effect of malformed exploit requests.
+// Observed: server_errors = 285 (of 3,000 events).
+//
+// Note: the screenshot shows the search executed with status_code>=500 only;
+// the <600 bound below is the documented form and is redundant in this
+// dataset (no status codes above 599 occurred).
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="http_logs" status_code>=500 status_code<600
+| stats count as server_errors
+
+
+// ----------------------------------------------------------------------------
+// Query 3: User agents associated with possible scripted attacks
+// Purpose: Surface requests from offensive tooling (sqlmap, botnet-checker)
+//          and scripted clients (curl, python-requests).
+// Observed: 296 events — sqlmap/1.5.1 79, python-requests/2.25.1 78,
+//           botnet-checker/1.0 70, curl/7.68.0 69.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="http_logs" user_agent IN ("sqlmap/1.5.1", "curl/7.68.0", "python-requests/2.25.1", "botnet-checker/1.0")
+| stats count by user_agent
+
+
+// ----------------------------------------------------------------------------
+// Query 4: Large file transfers (response body > 500 KB)
+// Purpose: Detect oversized HTTP responses — potential data staging or
+//          exfiltration hidden in normal-looking traffic.
+// Observed: 323 events; largest transfers ~1.97 MB serving /index.html.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="http_logs" resp_body_len>500000
+| table ts "id.orig_h" "id.resp_h" user_agent uri resp_body_len
+| sort -resp_body_len
+
+
+// ----------------------------------------------------------------------------
+// Query 5: Suspicious URI access (/admin, /shell.php, /etc/passwd)
+// Purpose: Detect reconnaissance of admin interfaces, webshells, and
+//          path-traversal targets, attributed per source IP.
+// Observed: 98 events across 74 URI/source pairs; /admin most probed.
+// ----------------------------------------------------------------------------
+
+index="homelab" sourcetype="http_logs" uri IN ("/admin","/shell.php","/etc/passwd")
+| stats count by uri, "id.orig_h"
+
+
+// ============================================================================
+// OPTIONAL IMPROVEMENTS — NOT EXECUTED, NO EVIDENCE CAPTURED
+// Suggested refinements for future work; not presented as tested.
+// ============================================================================
+
+// Improvement A: the "endpoints" variant of Query 1. The original task title
+// referenced endpoints; this counts requests per URI instead of per client.
+
+// index="homelab" sourcetype="http_logs"
+// | stats count by uri
+// | sort -count
+// | head 10
+
+
+// Improvement B: enrich Query 5 with response status codes. A 200 on
+// /etc/passwd or /shell.php escalates the finding from reconnaissance to a
+// confirmed compromise indicator; 403/404 means the probe failed.
+
+// index="homelab" sourcetype="http_logs" uri IN ("/admin","/shell.php","/etc/passwd")
+// | stats count by uri, status_code, "id.orig_h"
